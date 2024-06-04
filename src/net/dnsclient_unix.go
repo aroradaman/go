@@ -15,6 +15,7 @@ package net
 import (
 	"context"
 	"errors"
+	"fmt"
 	"internal/bytealg"
 	"internal/itoa"
 	"io"
@@ -205,7 +206,8 @@ func (r *Resolver) exchange(ctx context.Context, server string, q dnsmessage.Que
 // checkHeader performs basic sanity checks on the header.
 func checkHeader(p *dnsmessage.Parser, h dnsmessage.Header) error {
 	rcode := extractExtendedRCode(*p, h)
-
+	ans, _ := p.AllAnswers()
+	fmt.Printf("extended rcode:\t\trcode: %s\textended rcode: %s\tans: %v\n", h.RCode.String(), rcode.String(), ans)
 	if rcode == dnsmessage.RCodeNameError {
 		return errNoSuchHost
 	}
@@ -267,7 +269,11 @@ func extractExtendedRCode(p dnsmessage.Parser, hdr dnsmessage.Header) dnsmessage
 		if ahdr.Type == dnsmessage.TypeOPT {
 			return ahdr.ExtendedRCode(hdr.RCode)
 		}
-		p.SkipAdditional()
+		err = p.SkipAdditional()
+		if err != nil {
+			fmt.Printf("extract extended rcode:\terrror: %v\n", err)
+			time.Sleep(100 * time.Millisecond)
+		}
 	}
 }
 
@@ -293,6 +299,8 @@ func (r *Resolver) tryOneName(ctx context.Context, cfg *dnsConfig, name string, 
 			server := cfg.servers[(serverOffset+j)%sLen]
 
 			p, h, err := r.exchange(ctx, server, q, cfg.timeout, cfg.useTCP, cfg.trustAD)
+			ans, _ := p.AllAnswers()
+			fmt.Printf("exchange:\t\tfqdn: %s\ttype: %s\tans: %v\t\terror: %v\n", name, qtype.String(), ans, err)
 			if err != nil {
 				dnsErr := &DNSError{
 					Err:    err.Error(),
@@ -311,7 +319,9 @@ func (r *Resolver) tryOneName(ctx context.Context, cfg *dnsConfig, name string, 
 				continue
 			}
 
-			if err := checkHeader(&p, h); err != nil {
+			err = checkHeader(&p, h)
+			fmt.Printf("check header:\t\tfqdn: %s\ttype: %s\tans: %v\terror: %v\n", name, qtype.String(), ans, err)
+			if err != nil {
 				dnsErr := &DNSError{
 					Err:    err.Error(),
 					Name:   name,
@@ -668,6 +678,8 @@ func (r *Resolver) goLookupIPCNAMEOrder(ctx context.Context, network, name strin
 			dnsWaitGroup.Add(1)
 			go func(qtype dnsmessage.Type) {
 				p, server, err := r.tryOneName(ctx, conf, fqdn, qtype)
+				ans, _ := p.AllAnswers()
+				fmt.Printf("received response:\tfqdn: %s\ttype: %s\tanswers: %v\terr: %v\n", fqdn, qtype.String(), ans, err)
 				lane <- result{p, server, err}
 				dnsWaitGroup.Done()
 			}(qtype)
@@ -679,6 +691,7 @@ func (r *Resolver) goLookupIPCNAMEOrder(ctx context.Context, network, name strin
 	var lastErr error
 	for _, fqdn := range conf.nameList(name) {
 		for _, qtype := range qtypes {
+			fmt.Printf("querying:\t\tfqdn: %s\ttype: %s\n", fqdn, qtype.String())
 			queryFn(fqdn, qtype)
 		}
 		hitStrictError := false
